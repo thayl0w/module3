@@ -18,34 +18,36 @@ let db = null;
 function initDatabase() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
-    
+
     request.onerror = () => {
       console.error('Database failed to open');
       reject(request.error);
     };
-    
+
     request.onsuccess = () => {
       db = request.result;
       resolve(db);
     };
-    
+
     request.onupgradeneeded = (event) => {
       db = event.target.result;
-      
-      // Create object stores
+
+      // Create favorites store
       if (!db.objectStoreNames.contains('favorites')) {
         const favoritesStore = db.createObjectStore('favorites', { keyPath: 'idMeal' });
         favoritesStore.createIndex('name', 'strMeal', { unique: false });
         favoritesStore.createIndex('category', 'strCategory', { unique: false });
         favoritesStore.createIndex('area', 'strArea', { unique: false });
       }
-      
+
+      // Create search history store
       if (!db.objectStoreNames.contains('searchHistory')) {
         const historyStore = db.createObjectStore('searchHistory', { keyPath: 'id', autoIncrement: true });
         historyStore.createIndex('query', 'query', { unique: false });
         historyStore.createIndex('timestamp', 'timestamp', { unique: false });
       }
-      
+
+      // Create user preferences store
       if (!db.objectStoreNames.contains('userPreferences')) {
         db.createObjectStore('userPreferences', { keyPath: 'key' });
       }
@@ -63,9 +65,8 @@ async function getDatabase() {
 }
 
 /**
- * Save favorite recipe to database
- * @param {Object} meal - Recipe object
- * @returns {Promise<void>}
+ * Save a recipe to favorites
+ * @param {Object} meal
  */
 async function saveFavorite(meal) {
   try {
@@ -73,14 +74,13 @@ async function saveFavorite(meal) {
     const transaction = database.transaction(['favorites'], 'readwrite');
     const store = transaction.objectStore('favorites');
     await store.put(meal);
-    
-    // Also update localStorage for backward compatibility
+
+    // Also save to localStorage as fallback
     const favorites = JSON.parse(localStorage.getItem('rf-favorites') || '{}');
     favorites[meal.idMeal] = meal;
     localStorage.setItem('rf-favorites', JSON.stringify(favorites));
   } catch (err) {
     console.error('Error saving favorite:', err);
-    // Fallback to localStorage
     const favorites = JSON.parse(localStorage.getItem('rf-favorites') || '{}');
     favorites[meal.idMeal] = meal;
     localStorage.setItem('rf-favorites', JSON.stringify(favorites));
@@ -88,9 +88,8 @@ async function saveFavorite(meal) {
 }
 
 /**
- * Remove favorite recipe from database
- * @param {string} mealId - Recipe ID
- * @returns {Promise<void>}
+ * Remove a recipe from favorites
+ * @param {string} mealId
  */
 async function removeFavorite(mealId) {
   try {
@@ -98,14 +97,12 @@ async function removeFavorite(mealId) {
     const transaction = database.transaction(['favorites'], 'readwrite');
     const store = transaction.objectStore('favorites');
     await store.delete(mealId);
-    
-    // Also update localStorage
+
     const favorites = JSON.parse(localStorage.getItem('rf-favorites') || '{}');
     delete favorites[mealId];
     localStorage.setItem('rf-favorites', JSON.stringify(favorites));
   } catch (err) {
     console.error('Error removing favorite:', err);
-    // Fallback to localStorage
     const favorites = JSON.parse(localStorage.getItem('rf-favorites') || '{}');
     delete favorites[mealId];
     localStorage.setItem('rf-favorites', JSON.stringify(favorites));
@@ -113,7 +110,7 @@ async function removeFavorite(mealId) {
 }
 
 /**
- * Get all favorites from database
+ * Get all favorite recipes
  * @returns {Promise<Array>}
  */
 async function getAllFavorites() {
@@ -121,7 +118,7 @@ async function getAllFavorites() {
     const database = await getDatabase();
     const transaction = database.transaction(['favorites'], 'readonly');
     const store = transaction.objectStore('favorites');
-    
+
     return new Promise((resolve, reject) => {
       const request = store.getAll();
       request.onsuccess = () => resolve(request.result);
@@ -129,15 +126,14 @@ async function getAllFavorites() {
     });
   } catch (err) {
     console.error('Error getting favorites:', err);
-    // Fallback to localStorage
     const favorites = JSON.parse(localStorage.getItem('rf-favorites') || '{}');
     return Object.values(favorites);
   }
 }
 
 /**
- * Check if recipe is favorited
- * @param {string} mealId - Recipe ID
+ * Check if a recipe is in favorites
+ * @param {string} mealId
  * @returns {Promise<boolean>}
  */
 async function isFavorite(mealId) {
@@ -145,7 +141,7 @@ async function isFavorite(mealId) {
     const database = await getDatabase();
     const transaction = database.transaction(['favorites'], 'readonly');
     const store = transaction.objectStore('favorites');
-    
+
     return new Promise((resolve, reject) => {
       const request = store.get(mealId);
       request.onsuccess = () => resolve(!!request.result);
@@ -153,32 +149,30 @@ async function isFavorite(mealId) {
     });
   } catch (err) {
     console.error('Error checking favorite:', err);
-    // Fallback to localStorage
     const favorites = JSON.parse(localStorage.getItem('rf-favorites') || '{}');
     return !!favorites[mealId];
   }
 }
 
 /**
- * Save search query to history
- * @param {string} query - Search query
- * @returns {Promise<void>}
+ * Save a search query
+ * @param {string} query
  */
 async function saveSearchHistory(query) {
   if (!query || query.trim().length === 0) return;
-  
+
   try {
     const database = await getDatabase();
     const transaction = database.transaction(['searchHistory'], 'readwrite');
     const store = transaction.objectStore('searchHistory');
-    
+
     const historyItem = {
       query: query.trim(),
       timestamp: Date.now()
     };
-    
+
     await store.add(historyItem);
-    
+
     // Keep only last 50 searches
     const allHistory = await new Promise((resolve, reject) => {
       const request = store.index('timestamp').openCursor(null, 'prev');
@@ -190,7 +184,6 @@ async function saveSearchHistory(query) {
           if (history.length < 50) {
             cursor.continue();
           } else {
-            // Delete older entries
             cursor.delete();
             cursor.continue();
           }
@@ -206,8 +199,8 @@ async function saveSearchHistory(query) {
 }
 
 /**
- * Get search history
- * @param {number} limit - Maximum number of results
+ * Get recent search history
+ * @param {number} limit
  * @returns {Promise<Array>}
  */
 async function getSearchHistory(limit = 10) {
@@ -216,7 +209,7 @@ async function getSearchHistory(limit = 10) {
     const transaction = database.transaction(['searchHistory'], 'readonly');
     const store = transaction.objectStore('searchHistory');
     const index = store.index('timestamp');
-    
+
     return new Promise((resolve, reject) => {
       const request = index.openCursor(null, 'prev');
       const history = [];
@@ -238,10 +231,9 @@ async function getSearchHistory(limit = 10) {
 }
 
 /**
- * Save user preference
- * @param {string} key - Preference key
- * @param {*} value - Preference value
- * @returns {Promise<void>}
+ * Save a user preference
+ * @param {string} key
+ * @param {*} value
  */
 async function savePreference(key, value) {
   try {
@@ -251,15 +243,14 @@ async function savePreference(key, value) {
     await store.put({ key, value });
   } catch (err) {
     console.error('Error saving preference:', err);
-    // Fallback to localStorage
     localStorage.setItem(`rf-pref-${key}`, JSON.stringify(value));
   }
 }
 
 /**
- * Get user preference
- * @param {string} key - Preference key
- * @param {*} defaultValue - Default value if not found
+ * Get a user preference
+ * @param {string} key
+ * @param {*} defaultValue
  * @returns {Promise<*>}
  */
 async function getPreference(key, defaultValue = null) {
@@ -267,7 +258,7 @@ async function getPreference(key, defaultValue = null) {
     const database = await getDatabase();
     const transaction = database.transaction(['userPreferences'], 'readonly');
     const store = transaction.objectStore('userPreferences');
-    
+
     return new Promise((resolve, reject) => {
       const request = store.get(key);
       request.onsuccess = () => {
@@ -278,19 +269,16 @@ async function getPreference(key, defaultValue = null) {
     });
   } catch (err) {
     console.error('Error getting preference:', err);
-    // Fallback to localStorage
     const stored = localStorage.getItem(`rf-pref-${key}`);
     return stored ? JSON.parse(stored) : defaultValue;
   }
 }
 
-// Initialize database on load (non-blocking)
+// Initialize database on page load
 if (typeof indexedDB !== 'undefined') {
-  // Use setTimeout to avoid blocking page load
   setTimeout(() => {
     initDatabase().catch(err => {
       console.warn('IndexedDB not available, using localStorage fallback:', err);
     });
   }, 100);
 }
-

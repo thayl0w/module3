@@ -1,15 +1,8 @@
-/* ---------------------------
-   Categories Page — categories.js
-   Features:
-   - Display all recipe categories
-   - Search/filter categories
-   - Show recipe count per category
-   - Interactive category cards
-   - Theme toggle functionality
-   --------------------------- */
+// categories page script
+// loads categories, shows counts and has a small search
 
-const API_BASE = 'https://www.themealdb.com/api/json/v1/1';
-const themeToggle = document.getElementById('themeToggle');
+const API_URL = 'https://www.themealdb.com/api/json/v1/1';
+const themeToggleCat = document.getElementById('themeToggle');
 const categorySearch = document.getElementById('categorySearch');
 const categoriesGrid = document.getElementById('categoriesGrid');
 const emptyState = document.getElementById('emptyState');
@@ -19,158 +12,169 @@ const viewAllBtn = document.getElementById('viewAllBtn');
 let allCategories = [];
 
 /**
- * Initialize the categories page
+ * Boot the categories page.
  */
-function init() {
-  restoreTheme();
-  bindEvents();
-  loadCategories();
-  initFooterDateTime();
+function initCategoriesPage() {
+  restoreThemePref();
+  bindCategoryEvents();
+  loadAllCategories();
+  startFooterClockCategories();
 }
 
 /**
- * Bind event listeners
+ * Bind UI events.
  */
-function bindEvents() {
-  // Theme toggle
-  themeToggle.addEventListener('click', () => {
-    const isDark = document.body.classList.toggle('dark');
-    document.documentElement.classList.toggle('dark', isDark);
-    localStorage.setItem('rf-theme-dark', isDark);
-    themeToggle.textContent = isDark ? '☀️' : '🌙';
-  });
-  
-  // Category search
-  categorySearch.addEventListener('input', (e) => {
-    filterCategories(e.target.value);
-  });
-  
-  // View all recipes button
-  viewAllBtn.addEventListener('click', () => {
-    window.location.href = 'index.html';
-  });
+function bindCategoryEvents() {
+  if (themeToggleCat) {
+    themeToggleCat.addEventListener('click', () => {
+      const isDark = document.body.classList.toggle('dark');
+      document.documentElement.classList.toggle('dark', isDark);
+      localStorage.setItem('rf-theme-dark', isDark);
+      themeToggleCat.textContent = isDark ? '☀️' : '🌙';
+    });
+  }
+
+  if (categorySearch) {
+    categorySearch.addEventListener('input', (e) => {
+      filterCategories(e.target.value);
+    });
+  }
+
+  if (viewAllBtn) {
+    viewAllBtn.addEventListener('click', () => {
+      // go back to main page
+      window.location.href = 'index.html';
+    });
+  }
 }
 
 /**
- * Restore theme preference from localStorage
+ * Restore the saved theme.
  */
-function restoreTheme() {
+function restoreThemePref() {
   const dark = localStorage.getItem('rf-theme-dark') === 'true';
   if (dark) {
     document.body.classList.add('dark');
     document.documentElement.classList.add('dark');
-    themeToggle.textContent = '☀️';
+    if (themeToggleCat) themeToggleCat.textContent = '☀️';
   } else {
+    if (themeToggleCat) themeToggleCat.textContent = '🌙';
     document.documentElement.classList.remove('dark');
-    themeToggle.textContent = '🌙';
   }
 }
 
 /**
- * Load all categories from API
+ * Load categories from API and get counts.
  */
-async function loadCategories() {
+async function loadAllCategories() {
   try {
-    showSpinner(true);
-    emptyState.classList.add('hidden');
-    
-    const response = await fetch(`${API_BASE}/list.php?c=list`);
-    const data = await response.json();
-    
+    toggleSpinner(true);
+    if (emptyState) emptyState.classList.add('hidden');
+
+    const res = await fetch(`${API_URL}/list.php?c=list`);
+    const data = await res.json();
+
     if (data && data.meals) {
       allCategories = data.meals;
-      
-      // Fetch recipe count for each category
-      const categoriesWithCounts = await Promise.all(
-        allCategories.map(async (category) => {
-          try {
-            const countResponse = await fetch(`${API_BASE}/filter.php?c=${encodeURIComponent(category.strCategory)}`);
-            const countData = await countResponse.json();
-            return {
-              ...category,
-              count: countData && countData.meals ? countData.meals.length : 0
-            };
-          } catch (err) {
-            return { ...category, count: 0 };
-          }
-        })
-      );
-      
-      allCategories = categoriesWithCounts;
+
+      // fetch counts for each category in parallel
+      const withCounts = await Promise.all(allCategories.map(async (cat) => {
+        try {
+          const r = await fetch(`${API_URL}/filter.php?c=${encodeURIComponent(cat.strCategory)}`);
+          const d = await r.json();
+          return { ...cat, count: d && d.meals ? d.meals.length : 0 };
+        } catch (err) {
+          // return 0 if a count fetch fails
+          return { ...cat, count: 0 };
+        }
+      }));
+
+      allCategories = withCounts;
       renderCategories(allCategories);
     } else {
-      emptyState.textContent = 'No categories found.';
-      emptyState.classList.remove('hidden');
+      if (emptyState) {
+        emptyState.textContent = 'No categories found.';
+        emptyState.classList.remove('hidden');
+      }
     }
   } catch (err) {
     console.error('Error loading categories:', err);
-    emptyState.textContent = 'Error loading categories. Please try again later.';
-    emptyState.classList.remove('hidden');
+    if (emptyState) {
+      emptyState.textContent = 'Error loading categories. Please try again later.';
+      emptyState.classList.remove('hidden');
+    }
   } finally {
-    showSpinner(false);
+    toggleSpinner(false);
   }
 }
 
 /**
- * Filter categories based on search input
+ * Filter categories by name.
  */
-function filterCategories(searchTerm) {
-  const filtered = allCategories.filter(cat => 
-    cat.strCategory.toLowerCase().includes(searchTerm.toLowerCase())
+function filterCategories(term) {
+  if (!term) {
+    renderCategories(allCategories);
+    return;
+  }
+  const filtered = allCategories.filter(cat =>
+    cat.strCategory.toLowerCase().includes(term.toLowerCase())
   );
   renderCategories(filtered);
 }
 
 /**
- * Render categories to the grid
+ * Render a list of category objects to the page.
  */
-function renderCategories(categories) {
+function renderCategories(list) {
+  if (!categoriesGrid) return;
   categoriesGrid.innerHTML = '';
-  
-  if (categories.length === 0) {
-    emptyState.textContent = 'No categories match your search.';
-    emptyState.classList.remove('hidden');
+
+  if (!list || list.length === 0) {
+    if (emptyState) {
+      emptyState.textContent = 'No categories match your search.';
+      emptyState.classList.remove('hidden');
+    }
     return;
   }
-  
-  emptyState.classList.add('hidden');
-  
-  categories.forEach(category => {
-    const categoryCard = createCategoryCard(category);
-    categoriesGrid.appendChild(categoryCard);
+
+  if (emptyState) emptyState.classList.add('hidden');
+
+  list.forEach(category => {
+    const card = createCategoryCard(category);
+    categoriesGrid.appendChild(card);
   });
 }
 
 /**
- * Create a category card element
+ * Make a category card element.
  */
 function createCategoryCard(category) {
   const card = document.createElement('div');
   card.className = 'category-card';
   card.setAttribute('role', 'listitem');
-  
+
   card.innerHTML = `
-    <div class="category-icon">${getCategoryIcon(category.strCategory)}</div>
+    <div class="category-icon">${getIcon(category.strCategory)}</div>
     <h3 class="category-name">${category.strCategory}</h3>
     <p class="category-count">${category.count || 0} recipes</p>
     <button class="view-category-btn" data-category="${category.strCategory}">View Recipes</button>
   `;
-  
-  // Add click handler
+
   const viewBtn = card.querySelector('.view-category-btn');
   viewBtn.addEventListener('click', () => {
-    // Navigate to main page with category filter
+    // go to main page with category param
     window.location.href = `index.html?category=${encodeURIComponent(category.strCategory)}`;
   });
-  
+
   return card;
 }
 
 /**
- * Get emoji icon for category
+ * Return a small emoji icon for some categories.
+ * Not exhaustive, just a helpful visual.
  */
-function getCategoryIcon(category) {
-  const icons = {
+function getIcon(category) {
+  const map = {
     'Beef': '🥩',
     'Chicken': '🍗',
     'Dessert': '🍰',
@@ -186,13 +190,14 @@ function getCategoryIcon(category) {
     'Breakfast': '🥞',
     'Goat': '🐐'
   };
-  return icons[category] || '🍳';
+  return map[category] || '🍳';
 }
 
 /**
- * Show/hide spinner
+ * Show or hide the spinner element.
  */
-function showSpinner(show) {
+function toggleSpinner(show) {
+  if (!spinner) return;
   if (show) {
     spinner.classList.remove('hidden');
     spinner.setAttribute('aria-hidden', 'false');
@@ -203,34 +208,27 @@ function showSpinner(show) {
 }
 
 /**
- * Update footer date and time display
+ * Update footer date/time for categories page.
  */
-function updateFooterDateTime() {
+function updateFooterDateTimeCategories() {
   const footerDateTime = document.getElementById('footerDateTime');
   if (!footerDateTime) return;
-  
   const now = new Date();
-  const options = { 
-    year: 'numeric', 
-    month: 'short', 
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
+  const opts = {
+    year: 'numeric', month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
     hour12: true
   };
-  const dateTimeString = now.toLocaleString('en-US', options);
-  footerDateTime.textContent = dateTimeString;
+  footerDateTime.textContent = now.toLocaleString('en-US', opts);
 }
 
 /**
- * Initialize footer date/time and update every second
+ * Start the footer clock updater.
  */
-function initFooterDateTime() {
-  updateFooterDateTime();
-  setInterval(updateFooterDateTime, 1000);
+function startFooterClockCategories() {
+  updateFooterDateTimeCategories();
+  setInterval(updateFooterDateTimeCategories, 1000);
 }
 
-// Initialize page
-init();
-
+// start the page
+initCategoriesPage();
